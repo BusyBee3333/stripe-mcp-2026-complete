@@ -205,6 +205,13 @@ src/
 - **Rotate keys immediately** if exposed in logs or source control
 - The server logs to stderr only — Stripe keys never appear in stdout (MCP protocol stream)
 
+## Resources
+
+- [Stripe API Reference](https://stripe.com/docs/api)
+- [Stripe Dashboard — API Keys](https://dashboard.stripe.com/apikeys)
+- [Stripe Testing Guide](https://stripe.com/docs/testing)
+- [MCP Protocol Spec](https://modelcontextprotocol.io)
+
 ## License
 
 MIT
