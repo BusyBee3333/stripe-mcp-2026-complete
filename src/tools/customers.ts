@@ -6,6 +6,29 @@ import type { StripeClient } from "../client.js";
 import type { ToolDefinition, ToolHandler, StripeCustomer, StripeList } from "../types.js";
 import { logger } from "../logger.js";
 
+// === NEW Zod Schemas (expansion) ===
+const ListCustomerPaymentMethodsSchema = z.object({
+  customer_id: z.string().describe("Stripe customer ID (cus_xxx)"),
+  limit: z.number().min(1).max(100).optional().default(20).describe("Number of results (1-100, default 20)"),
+  type: z.enum(["acss_debit", "affirm", "afterpay_clearpay", "alipay", "amazon_pay", "au_becs_debit", "bacs_debit", "bancontact", "blik", "boleto", "card", "cashapp", "customer_balance", "eps", "fpx", "giropay", "grabpay", "ideal", "klarna", "konbini", "link", "mobilepay", "multibanco", "oxxo", "p24", "paynow", "paypal", "pix", "promptpay", "revolut_pay", "sepa_debit", "sofort", "swish", "twint", "us_bank_account", "wechat_pay", "zip"]).optional().describe("Filter by payment method type (e.g. 'card', 'us_bank_account', 'sepa_debit')"),
+  starting_after: z.string().optional().describe("Keyset pagination cursor — ID of last item from previous page"),
+  ending_before: z.string().optional().describe("Keyset pagination cursor — for reversed pagination"),
+});
+
+const GetCustomerBalanceTransactionsSchema = z.object({
+  customer_id: z.string().describe("Stripe customer ID (cus_xxx)"),
+  limit: z.number().min(1).max(100).optional().default(20).describe("Number of results (1-100, default 20)"),
+  starting_after: z.string().optional().describe("Keyset pagination cursor — ID of last item from previous page"),
+  ending_before: z.string().optional().describe("Keyset pagination cursor — for reversed pagination"),
+});
+
+const CreateCustomerCashBalanceTransactionSchema = z.object({
+  customer_id: z.string().describe("Stripe customer ID (cus_xxx) to fund"),
+  amount: z.number().int().positive().describe("Amount to add to the customer's cash balance in smallest currency unit (e.g. 10000 for $100.00 USD)"),
+  currency: z.string().length(3).describe("Three-letter ISO currency code (e.g. 'usd', 'eur', 'gbp') — must match customer's cash balance currency"),
+  reference: z.string().optional().describe("Internal reference or note for this transaction"),
+});
+
 // === Zod Schemas ===
 const ListCustomersSchema = z.object({
   limit: z.number().min(1).max(100).optional().default(20).describe("Number of results (1-100, default 20)"),
@@ -179,6 +202,59 @@ function getToolDefinitions(): ToolDefinition[] {
         openWorldHint: false,
       },
     },
+    // ---- EXPANDED TOOLS ----
+    {
+      name: "list_customer_payment_methods",
+      title: "List Customer Payment Methods",
+      description:
+        "List all payment methods attached to a specific Stripe customer. Optionally filter by type (card, us_bank_account, sepa_debit, etc.). Returns card brand/last4, billing details, and created date. Uses keyset pagination.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          customer_id: { type: "string", description: "Stripe customer ID (cus_xxx)" },
+          limit: { type: "number", description: "Number of results (1-100, default 20)" },
+          type: { type: "string", description: "Filter by payment method type (e.g. 'card', 'sepa_debit', 'us_bank_account')" },
+          starting_after: { type: "string", description: "Pagination cursor — last ID from previous page" },
+          ending_before: { type: "string", description: "Pagination cursor — for reversed pagination" },
+        },
+        required: ["customer_id"],
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: "get_customer_balance_transactions",
+      title: "Get Customer Balance Transactions",
+      description:
+        "List balance transactions for a Stripe customer's balance (credit balance applied to invoices). Returns transaction type, amount, currency, description, and the associated invoice. Uses keyset pagination.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          customer_id: { type: "string", description: "Stripe customer ID (cus_xxx)" },
+          limit: { type: "number", description: "Number of results (1-100, default 20)" },
+          starting_after: { type: "string", description: "Pagination cursor — last ID from previous page" },
+          ending_before: { type: "string", description: "Pagination cursor — for reversed pagination" },
+        },
+        required: ["customer_id"],
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: "create_customer_cash_balance_transaction",
+      title: "Create Customer Cash Balance Transaction",
+      description:
+        "Fund a Stripe customer's cash balance directly. Cash balance is used for bank transfer payments — when a customer sends a wire/bank transfer, Stripe automatically reconciles it. Use this to manually add funds for testing or to record out-of-band payments.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          customer_id: { type: "string", description: "Stripe customer ID (cus_xxx)" },
+          amount: { type: "number", description: "Amount in smallest currency unit (e.g. 10000 for $100.00)" },
+          currency: { type: "string", description: "Three-letter currency code (e.g. 'usd', 'eur')" },
+          reference: { type: "string", description: "Internal reference/note for this transaction" },
+        },
+        required: ["customer_id", "amount", "currency"],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
   ];
 }
 
@@ -287,6 +363,58 @@ function getToolHandlers(client: StripeClient): Record<string, ToolHandler> {
         content: [{ type: "text", text: JSON.stringify(customer, null, 2) }],
         structuredContent: customer,
       };
+    },
+
+    // ---- EXPANDED HANDLERS ----
+    list_customer_payment_methods: async (args) => {
+      const params = ListCustomerPaymentMethodsSchema.parse(args);
+      const queryParams: Record<string, string | number | boolean | undefined | null> = { limit: params.limit };
+      if (params.type) queryParams.type = params.type;
+      if (params.starting_after) queryParams.starting_after = params.starting_after;
+      if (params.ending_before) queryParams.ending_before = params.ending_before;
+
+      const result = await logger.time("tool.list_customer_payment_methods", () =>
+        client.list<Record<string, unknown>>(`/customers/${params.customer_id}/payment_methods`, queryParams)
+      , { tool: "list_customer_payment_methods", customer_id: params.customer_id });
+
+      const lastItem = result.data[result.data.length - 1] as { id?: string } | undefined;
+      const response = {
+        data: result.data,
+        meta: { count: result.data.length, hasMore: result.has_more, ...(lastItem?.id ? { lastId: lastItem.id } : {}) },
+      };
+      return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }], structuredContent: response };
+    },
+
+    get_customer_balance_transactions: async (args) => {
+      const params = GetCustomerBalanceTransactionsSchema.parse(args);
+      const queryParams: Record<string, string | number | boolean | undefined | null> = { limit: params.limit };
+      if (params.starting_after) queryParams.starting_after = params.starting_after;
+      if (params.ending_before) queryParams.ending_before = params.ending_before;
+
+      const result = await logger.time("tool.get_customer_balance_transactions", () =>
+        client.list<Record<string, unknown>>(`/customers/${params.customer_id}/balance_transactions`, queryParams)
+      , { tool: "get_customer_balance_transactions", customer_id: params.customer_id });
+
+      const lastItem = result.data[result.data.length - 1] as { id?: string } | undefined;
+      const response = {
+        data: result.data,
+        meta: { count: result.data.length, hasMore: result.has_more, ...(lastItem?.id ? { lastId: lastItem.id } : {}) },
+      };
+      return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }], structuredContent: response };
+    },
+
+    create_customer_cash_balance_transaction: async (args) => {
+      const params = CreateCustomerCashBalanceTransactionSchema.parse(args);
+      const body: Record<string, string | number | boolean | undefined | null> = {
+        amount: params.amount,
+        currency: params.currency,
+      };
+      if (params.reference) body.reference = params.reference;
+
+      const transaction = await logger.time("tool.create_customer_cash_balance_transaction", () =>
+        client.post<Record<string, unknown>>(`/test_helpers/customers/${params.customer_id}/fund_cash_balance`, body)
+      , { tool: "create_customer_cash_balance_transaction", customer_id: params.customer_id });
+      return { content: [{ type: "text", text: JSON.stringify(transaction, null, 2) }], structuredContent: transaction };
     },
   };
 }

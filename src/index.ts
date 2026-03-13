@@ -18,6 +18,9 @@ async function loadAllTools(client: StripeClient) {
   const [
     health, customers, paymentIntents, subscriptions, invoices, products, charges,
     refunds, disputes, prices, coupons, paymentMethods, checkout, webhooks, transfers, balance,
+    // Round 2 additions
+    subscriptionSchedules, setupIntents, taxRates, billingPortal, payouts,
+    connect, promotionCodes, creditNotes, meters, shippingRates,
   ] = await Promise.all([
     import("./tools/health.js").then((m) => m.getTools(client)),
     import("./tools/customers.js").then((m) => m.getTools(client)),
@@ -35,11 +38,25 @@ async function loadAllTools(client: StripeClient) {
     import("./tools/webhooks.js").then((m) => m.getTools(client)),
     import("./tools/transfers.js").then((m) => m.getTools(client)),
     import("./tools/balance.js").then((m) => m.getTools(client)),
+    // Round 2 additions
+    import("./tools/subscription_schedules.js").then((m) => m.getTools(client)),
+    import("./tools/setup_intents.js").then((m) => m.getTools(client)),
+    import("./tools/tax_rates.js").then((m) => m.getTools(client)),
+    import("./tools/billing_portal.js").then((m) => m.getTools(client)),
+    import("./tools/payouts.js").then((m) => m.getTools(client)),
+    import("./tools/connect.js").then((m) => m.getTools(client)),
+    import("./tools/promotion_codes.js").then((m) => m.getTools(client)),
+    import("./tools/credit_notes.js").then((m) => m.getTools(client)),
+    import("./tools/meters.js").then((m) => m.getTools(client)),
+    import("./tools/shipping_rates.js").then((m) => m.getTools(client)),
   ]);
 
   return [
     health, customers, paymentIntents, subscriptions, invoices, products, charges,
     refunds, disputes, prices, coupons, paymentMethods, checkout, webhooks, transfers, balance,
+    // Round 2 additions
+    subscriptionSchedules, setupIntents, taxRates, billingPortal, payouts,
+    connect, promotionCodes, creditNotes, meters, shippingRates,
   ];
 }
 

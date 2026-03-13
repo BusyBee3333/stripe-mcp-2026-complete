@@ -6,6 +6,43 @@ import type { StripeClient } from "../client.js";
 import type { ToolDefinition, ToolHandler, StripeSubscription } from "../types.js";
 import { logger } from "../logger.js";
 
+// === NEW Zod Schemas (expansion — subscription items) ===
+const ListSubscriptionItemsSchema = z.object({
+  subscription: z.string().describe("Subscription ID (sub_xxx) — required. Returns all items on this subscription."),
+  limit: z.number().min(1).max(100).optional().default(20).describe("Number of results (1-100, default 20)"),
+  starting_after: z.string().optional().describe("Keyset pagination cursor — ID of last item from previous page"),
+  ending_before: z.string().optional().describe("Keyset pagination cursor — for reversed pagination"),
+});
+
+const AddSubscriptionItemSchema = z.object({
+  subscription: z.string().describe("Subscription ID (sub_xxx) to add the item to — required"),
+  price: z.string().describe("Price ID (price_xxx) for the new item — required"),
+  quantity: z.number().int().positive().optional().default(1).describe("Quantity for this item (default: 1). Set to 0 for metered prices."),
+  proration_behavior: z.enum(["create_prorations", "none", "always_invoice"]).optional().describe("How to handle proration for the added item (default: create_prorations)"),
+  proration_date: z.number().int().positive().optional().describe("Unix timestamp to use as the proration date (defaults to current time)"),
+  payment_behavior: z.enum(["allow_incomplete", "default_incomplete", "error_if_incomplete", "pending_if_incomplete"]).optional().describe("Behavior if the update results in payment failure"),
+  metadata: z.record(z.string()).optional().describe("Key-value metadata for this subscription item"),
+  tax_rates: z.array(z.string()).optional().describe("Tax rate IDs (txr_xxx) to apply to this item (overrides subscription-level tax rates)"),
+});
+
+const UpdateSubscriptionItemSchema = z.object({
+  subscription_item_id: z.string().describe("Subscription item ID (si_xxx) to update"),
+  price: z.string().optional().describe("New price ID (price_xxx) to switch this item to"),
+  quantity: z.number().int().min(0).optional().describe("New quantity (use 0 for metered prices)"),
+  proration_behavior: z.enum(["create_prorations", "none", "always_invoice"]).optional().describe("Proration behavior for this change (default: create_prorations)"),
+  proration_date: z.number().int().positive().optional().describe("Unix timestamp to use as the proration date"),
+  payment_behavior: z.enum(["allow_incomplete", "default_incomplete", "error_if_incomplete", "pending_if_incomplete"]).optional().describe("Behavior if the update results in payment failure"),
+  metadata: z.record(z.string()).optional().describe("Key-value metadata (merges with existing)"),
+  tax_rates: z.array(z.string()).optional().describe("Tax rate IDs (txr_xxx) — pass empty array to clear"),
+});
+
+const RemoveSubscriptionItemSchema = z.object({
+  subscription_item_id: z.string().describe("Subscription item ID (si_xxx) to remove — required"),
+  proration_behavior: z.enum(["create_prorations", "none", "always_invoice"]).optional().describe("Proration behavior for the removal (default: create_prorations)"),
+  proration_date: z.number().int().positive().optional().describe("Unix timestamp to use as the proration date"),
+  clear_usage: z.boolean().optional().describe("For metered items: reset usage to 0 before removing (default: false)"),
+});
+
 // === Zod Schemas ===
 const ListSubscriptionsSchema = z.object({
   limit: z.number().min(1).max(100).optional().default(20).describe("Number of results (1-100, default 20)"),
@@ -255,6 +292,83 @@ function getToolDefinitions(): ToolDefinition[] {
         openWorldHint: false,
       },
     },
+    // ---- EXPANDED TOOLS: Subscription Items ----
+    {
+      name: "list_subscription_items",
+      title: "List Subscription Items",
+      description:
+        "List all items (price+quantity pairs) on a Stripe subscription. Each subscription item represents one price billed. Use this to inspect what a customer is being charged for and their quantities.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          subscription: { type: "string", description: "Subscription ID (sub_xxx) — required" },
+          limit: { type: "number", description: "Number of results (1-100, default 20)" },
+          starting_after: { type: "string", description: "Pagination cursor — last ID from previous page" },
+          ending_before: { type: "string", description: "Pagination cursor — for reversed pagination" },
+        },
+        required: ["subscription"],
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: "add_subscription_item",
+      title: "Add Subscription Item",
+      description:
+        "Add a new price/plan to an existing Stripe subscription. Useful for adding add-ons, seat expansions, or additional products to a subscription. Prorations are created by default for mid-cycle additions.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          subscription: { type: "string", description: "Subscription ID (sub_xxx) to add the item to" },
+          price: { type: "string", description: "Price ID (price_xxx) for the new item" },
+          quantity: { type: "number", description: "Quantity (default: 1, use 0 for metered prices)" },
+          proration_behavior: { type: "string", enum: ["create_prorations", "none", "always_invoice"], description: "Proration behavior (default: create_prorations)" },
+          proration_date: { type: "number", description: "Proration date as Unix timestamp" },
+          payment_behavior: { type: "string", enum: ["allow_incomplete", "default_incomplete", "error_if_incomplete", "pending_if_incomplete"], description: "Payment failure behavior" },
+          metadata: { type: "object", description: "Key-value metadata" },
+          tax_rates: { type: "array", description: "Tax rate IDs to apply", items: { type: "string" } },
+        },
+        required: ["subscription", "price"],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    {
+      name: "update_subscription_item",
+      title: "Update Subscription Item",
+      description:
+        "Update a specific item on a Stripe subscription — change price, quantity, tax rates, or metadata. Use this to upgrade/downgrade individual plan components. Prorations are created by default.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          subscription_item_id: { type: "string", description: "Subscription item ID (si_xxx) to update" },
+          price: { type: "string", description: "New price ID (price_xxx)" },
+          quantity: { type: "number", description: "New quantity (0 for metered)" },
+          proration_behavior: { type: "string", enum: ["create_prorations", "none", "always_invoice"], description: "Proration behavior" },
+          proration_date: { type: "number", description: "Proration date as Unix timestamp" },
+          payment_behavior: { type: "string", enum: ["allow_incomplete", "default_incomplete", "error_if_incomplete", "pending_if_incomplete"], description: "Payment failure behavior" },
+          metadata: { type: "object", description: "Key-value metadata" },
+          tax_rates: { type: "array", description: "Tax rate IDs — empty array to clear", items: { type: "string" } },
+        },
+        required: ["subscription_item_id"],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: "remove_subscription_item",
+      title: "Remove Subscription Item",
+      description:
+        "Remove an item from a Stripe subscription. Prorations are created by default for mid-cycle removals. For metered items, set clear_usage=true to reset usage before removal. The subscription continues with remaining items.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          subscription_item_id: { type: "string", description: "Subscription item ID (si_xxx) to remove" },
+          proration_behavior: { type: "string", enum: ["create_prorations", "none", "always_invoice"], description: "Proration behavior (default: create_prorations)" },
+          proration_date: { type: "number", description: "Proration date as Unix timestamp" },
+          clear_usage: { type: "boolean", description: "Reset metered usage before removing (default: false)" },
+        },
+        required: ["subscription_item_id"],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
   ];
 }
 
@@ -418,6 +532,87 @@ function getToolHandlers(client: StripeClient): Record<string, ToolHandler> {
         content: [{ type: "text", text: JSON.stringify(subscription, null, 2) }],
         structuredContent: subscription,
       };
+    },
+
+    // ---- EXPANDED HANDLERS: Subscription Items ----
+    list_subscription_items: async (args) => {
+      const params = ListSubscriptionItemsSchema.parse(args);
+      const queryParams: Record<string, string | number | boolean | undefined | null> = {
+        subscription: params.subscription,
+        limit: params.limit,
+      };
+      if (params.starting_after) queryParams.starting_after = params.starting_after;
+      if (params.ending_before) queryParams.ending_before = params.ending_before;
+
+      const result = await logger.time("tool.list_subscription_items", () =>
+        client.list<Record<string, unknown>>("/subscription_items", queryParams)
+      , { tool: "list_subscription_items", subscription: params.subscription });
+
+      const lastItem = result.data[result.data.length - 1] as { id?: string } | undefined;
+      const response = {
+        data: result.data,
+        meta: { count: result.data.length, hasMore: result.has_more, ...(lastItem?.id ? { lastId: lastItem.id } : {}) },
+      };
+      return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }], structuredContent: response };
+    },
+
+    add_subscription_item: async (args) => {
+      const params = AddSubscriptionItemSchema.parse(args);
+      const body: Record<string, unknown> = {
+        subscription: params.subscription,
+        price: params.price,
+      };
+      if (params.quantity !== undefined) body.quantity = params.quantity;
+      if (params.proration_behavior) body.proration_behavior = params.proration_behavior;
+      if (params.proration_date) body.proration_date = params.proration_date;
+      if (params.payment_behavior) body.payment_behavior = params.payment_behavior;
+      if (params.metadata) body.metadata = params.metadata;
+      if (params.tax_rates) {
+        params.tax_rates.forEach((tr, i) => { body[`tax_rates[${i}]`] = tr; });
+      }
+
+      const item = await logger.time("tool.add_subscription_item", () =>
+        client.post<Record<string, unknown>>("/subscription_items", body as Record<string, string | number | boolean | undefined | null>)
+      , { tool: "add_subscription_item" });
+      return { content: [{ type: "text", text: JSON.stringify(item, null, 2) }], structuredContent: item };
+    },
+
+    update_subscription_item: async (args) => {
+      const params = UpdateSubscriptionItemSchema.parse(args);
+      const { subscription_item_id, price, quantity, proration_behavior, proration_date, payment_behavior, metadata, tax_rates } = params;
+      const body: Record<string, unknown> = {};
+
+      if (price) body.price = price;
+      if (quantity !== undefined) body.quantity = quantity;
+      if (proration_behavior) body.proration_behavior = proration_behavior;
+      if (proration_date) body.proration_date = proration_date;
+      if (payment_behavior) body.payment_behavior = payment_behavior;
+      if (metadata) body.metadata = metadata;
+      if (tax_rates) {
+        if (tax_rates.length === 0) {
+          body["tax_rates"] = "";  // Clear tax rates
+        } else {
+          tax_rates.forEach((tr, i) => { body[`tax_rates[${i}]`] = tr; });
+        }
+      }
+
+      const item = await logger.time("tool.update_subscription_item", () =>
+        client.post<Record<string, unknown>>(`/subscription_items/${subscription_item_id}`, body as Record<string, string | number | boolean | undefined | null>)
+      , { tool: "update_subscription_item", subscription_item_id });
+      return { content: [{ type: "text", text: JSON.stringify(item, null, 2) }], structuredContent: item };
+    },
+
+    remove_subscription_item: async (args) => {
+      const params = RemoveSubscriptionItemSchema.parse(args);
+      const body: Record<string, string | number | boolean | undefined | null> = {};
+      if (params.proration_behavior) body.proration_behavior = params.proration_behavior;
+      if (params.proration_date) body.proration_date = params.proration_date;
+      if (params.clear_usage !== undefined) body.clear_usage = params.clear_usage;
+
+      const result = await logger.time("tool.remove_subscription_item", () =>
+        client.delete<Record<string, unknown>>(`/subscription_items/${params.subscription_item_id}`, body)
+      , { tool: "remove_subscription_item", subscription_item_id: params.subscription_item_id });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], structuredContent: result };
     },
   };
 }
