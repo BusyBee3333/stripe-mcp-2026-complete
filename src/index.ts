@@ -15,7 +15,10 @@ const MCP_VERSION = "1.0.0";
 // TOOL GROUP LOADERS (lazy imports)
 // ============================================
 async function loadAllTools(client: StripeClient) {
-  const [health, customers, paymentIntents, subscriptions, invoices, products, charges] = await Promise.all([
+  const [
+    health, customers, paymentIntents, subscriptions, invoices, products, charges,
+    refunds, disputes, prices, coupons, paymentMethods, checkout, webhooks, transfers, balance,
+  ] = await Promise.all([
     import("./tools/health.js").then((m) => m.getTools(client)),
     import("./tools/customers.js").then((m) => m.getTools(client)),
     import("./tools/payment_intents.js").then((m) => m.getTools(client)),
@@ -23,9 +26,21 @@ async function loadAllTools(client: StripeClient) {
     import("./tools/invoices.js").then((m) => m.getTools(client)),
     import("./tools/products.js").then((m) => m.getTools(client)),
     import("./tools/charges.js").then((m) => m.getTools(client)),
+    import("./tools/refunds.js").then((m) => m.getTools(client)),
+    import("./tools/disputes.js").then((m) => m.getTools(client)),
+    import("./tools/prices.js").then((m) => m.getTools(client)),
+    import("./tools/coupons.js").then((m) => m.getTools(client)),
+    import("./tools/payment_methods.js").then((m) => m.getTools(client)),
+    import("./tools/checkout.js").then((m) => m.getTools(client)),
+    import("./tools/webhooks.js").then((m) => m.getTools(client)),
+    import("./tools/transfers.js").then((m) => m.getTools(client)),
+    import("./tools/balance.js").then((m) => m.getTools(client)),
   ]);
 
-  return [health, customers, paymentIntents, subscriptions, invoices, products, charges];
+  return [
+    health, customers, paymentIntents, subscriptions, invoices, products, charges,
+    refunds, disputes, prices, coupons, paymentMethods, checkout, webhooks, transfers, balance,
+  ];
 }
 
 // ============================================

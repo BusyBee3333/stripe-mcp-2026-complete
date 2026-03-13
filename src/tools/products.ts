@@ -1,5 +1,5 @@
-// Products and Prices tools — Stripe API v1
-// Covers: list_products, get_product, create_product, list_prices
+// Products tools — Stripe API v1
+// Covers: list_products, get_product, create_product, delete_product, archive_product
 
 import { z } from "zod";
 import type { StripeClient } from "../client.js";
@@ -29,12 +29,12 @@ const CreateProductSchema = z.object({
   price_recurring_interval_count: z.number().int().positive().optional().default(1).describe("Number of intervals between billings (default: 1)"),
 });
 
-const ListPricesSchema = z.object({
-  product: z.string().optional().describe("Filter by product ID (prod_xxx)"),
-  active: z.boolean().optional().describe("Filter by active status"),
-  type: z.enum(["one_time", "recurring"]).optional().describe("Filter by price type"),
-  limit: z.number().min(1).max(100).optional().default(20).describe("Number of results (default 20)"),
-  starting_after: z.string().optional().describe("Keyset pagination cursor — last ID from previous page"),
+const DeleteProductSchema = z.object({
+  product_id: z.string().describe("Stripe product ID (prod_xxx) to delete — product must have no active prices"),
+});
+
+const ArchiveProductSchema = z.object({
+  product_id: z.string().describe("Stripe product ID (prod_xxx) to archive (set active=false)"),
 });
 
 // === Tool Definitions ===
@@ -140,37 +140,55 @@ function getToolDefinitions(): ToolDefinition[] {
       },
     },
     {
-      name: "list_prices",
-      title: "List Prices",
+      name: "delete_product",
+      title: "Delete Product",
       description:
-        "List Stripe prices with optional filters by product, type (one_time or recurring), and active status. Returns price ID, amount, currency, and billing interval for recurring prices. Use to find price IDs for creating subscriptions.",
+        "Permanently delete a Stripe product. The product must have no active prices — archive or delete all prices first. This is irreversible. Consider using archive_product (setting active=false) instead if you want to preserve history.",
       inputSchema: {
         type: "object",
         properties: {
-          product: { type: "string", description: "Filter by product ID (prod_xxx)" },
-          active: { type: "boolean", description: "Filter by active status" },
-          type: { type: "string", enum: ["one_time", "recurring"], description: "Filter by price type" },
-          limit: { type: "number", description: "Number of results (default 20)" },
-          starting_after: { type: "string", description: "Pagination cursor — last ID from previous page" },
+          product_id: { type: "string", description: "Stripe product ID (prod_xxx) — must have no active prices" },
         },
+        required: ["product_id"],
       },
       outputSchema: {
         type: "object",
         properties: {
-          data: { type: "array" },
-          meta: {
-            type: "object",
-            properties: {
-              count: { type: "number" },
-              hasMore: { type: "boolean" },
-              lastId: { type: "string" },
-            },
-          },
+          id: { type: "string" },
+          deleted: { type: "boolean" },
         },
-        required: ["data", "meta"],
+        required: ["id", "deleted"],
       },
       annotations: {
-        readOnlyHint: true,
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    {
+      name: "archive_product",
+      title: "Archive Product",
+      description:
+        "Archive a Stripe product by setting active=false. Archived products no longer appear in product listings by default and cannot be purchased. Safer than deletion since all data is preserved and can be reactivated.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          product_id: { type: "string", description: "Stripe product ID (prod_xxx) to archive" },
+        },
+        required: ["product_id"],
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          active: { type: "boolean" },
+          name: { type: "string" },
+        },
+        required: ["id", "active"],
+      },
+      annotations: {
+        readOnlyHint: false,
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: false,
@@ -272,34 +290,29 @@ function getToolHandlers(client: StripeClient): Record<string, ToolHandler> {
       };
     },
 
-    list_prices: async (args) => {
-      const params = ListPricesSchema.parse(args);
+    delete_product: async (args) => {
+      const { product_id } = DeleteProductSchema.parse(args);
 
-      const queryParams: Record<string, string | number | boolean | undefined | null> = {
-        limit: params.limit,
-      };
-      if (params.product) queryParams.product = params.product;
-      if (params.active !== undefined) queryParams.active = params.active;
-      if (params.type) queryParams.type = params.type;
-      if (params.starting_after) queryParams.starting_after = params.starting_after;
-
-      const result = await logger.time("tool.list_prices", () =>
-        client.list<StripePrice>("/prices", queryParams)
-      , { tool: "list_prices" });
-
-      const lastItem = result.data[result.data.length - 1];
-      const response = {
-        data: result.data,
-        meta: {
-          count: result.data.length,
-          hasMore: result.has_more,
-          ...(lastItem ? { lastId: lastItem.id } : {}),
-        },
-      };
+      const result = await logger.time("tool.delete_product", () =>
+        client.delete<{ id: string; deleted: boolean }>(`/products/${product_id}`)
+      , { tool: "delete_product", product_id });
 
       return {
-        content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
-        structuredContent: response,
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        structuredContent: result,
+      };
+    },
+
+    archive_product: async (args) => {
+      const { product_id } = ArchiveProductSchema.parse(args);
+
+      const product = await logger.time("tool.archive_product", () =>
+        client.post<StripeProduct>(`/products/${product_id}`, { active: false })
+      , { tool: "archive_product", product_id });
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(product, null, 2) }],
+        structuredContent: product,
       };
     },
   };

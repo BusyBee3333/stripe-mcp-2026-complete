@@ -1,5 +1,5 @@
 // Subscriptions tools — Stripe API v1
-// Covers: list_subscriptions, get_subscription, create_subscription, cancel_subscription
+// Covers: list_subscriptions, get_subscription, create_subscription, cancel_subscription, pause_subscription, update_subscription
 
 import { z } from "zod";
 import type { StripeClient } from "../client.js";
@@ -33,6 +33,24 @@ const CancelSubscriptionSchema = z.object({
   subscription_id: z.string().describe("Stripe subscription ID (sub_xxx)"),
   cancel_at_period_end: z.boolean().optional().default(false).describe("Cancel at end of billing period (false=immediate, true=period end). Default: false"),
   cancellation_details_comment: z.string().optional().describe("Optional cancellation reason/comment"),
+});
+
+const PauseSubscriptionSchema = z.object({
+  subscription_id: z.string().describe("Stripe subscription ID (sub_xxx) to pause"),
+  resumes_at: z.number().int().optional().describe("Unix timestamp when the subscription should automatically resume (omit for indefinite pause)"),
+});
+
+const UpdateSubscriptionSchema = z.object({
+  subscription_id: z.string().describe("Stripe subscription ID (sub_xxx) to update"),
+  price: z.string().optional().describe("New price ID (price_xxx) to switch to — changes the subscription item price"),
+  quantity: z.number().int().positive().optional().describe("New quantity for the subscription item"),
+  trial_end: z.union([z.literal("now"), z.number().int().positive()]).optional().describe("End trial immediately ('now') or at a Unix timestamp"),
+  cancel_at_period_end: z.boolean().optional().describe("Set whether to cancel at period end"),
+  proration_behavior: z.enum(["create_prorations", "none", "always_invoice"]).optional().describe("How to handle proration when changing price (default: create_prorations)"),
+  metadata: z.record(z.string()).optional().describe("Key-value metadata (replaces existing)"),
+  coupon: z.string().optional().describe("Apply a coupon ID to this subscription"),
+  promotion_code: z.string().optional().describe("Apply a promotion code to this subscription"),
+  default_payment_method: z.string().optional().describe("Payment method ID (pm_xxx) to use for this subscription's invoices"),
 });
 
 // === Tool Definitions ===
@@ -171,6 +189,72 @@ function getToolDefinitions(): ToolDefinition[] {
         openWorldHint: false,
       },
     },
+    {
+      name: "pause_subscription",
+      title: "Pause Subscription",
+      description:
+        "Pause a Stripe subscription by enabling collection_method=send_invoice with a pause_collection behavior. Sets the subscription's pause_collection to prevent invoices from being generated. Optionally set resumes_at to auto-resume at a Unix timestamp.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          subscription_id: { type: "string", description: "Stripe subscription ID (sub_xxx) to pause" },
+          resumes_at: { type: "number", description: "Unix timestamp to auto-resume (omit for indefinite pause)" },
+        },
+        required: ["subscription_id"],
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          status: { type: "string" },
+          pause_collection: { type: "object" },
+        },
+        required: ["id", "status"],
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    {
+      name: "update_subscription",
+      title: "Update Subscription",
+      description:
+        "Update a Stripe subscription — change price, quantity, trial end, coupon, default payment method, or metadata. When changing price, use proration_behavior to control how prorations are handled. Returns the updated subscription.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          subscription_id: { type: "string", description: "Stripe subscription ID (sub_xxx) to update" },
+          price: { type: "string", description: "New price ID (price_xxx) to switch to" },
+          quantity: { type: "number", description: "New quantity for the subscription item" },
+          trial_end: { type: "string", description: "End trial: 'now' or a Unix timestamp" },
+          cancel_at_period_end: { type: "boolean", description: "Set whether to cancel at period end" },
+          proration_behavior: { type: "string", enum: ["create_prorations", "none", "always_invoice"], description: "Proration behavior when changing price" },
+          metadata: { type: "object", description: "Key-value metadata (replaces existing)" },
+          coupon: { type: "string", description: "Apply a coupon ID" },
+          default_payment_method: { type: "string", description: "Payment method ID (pm_xxx) for this subscription's invoices" },
+        },
+        required: ["subscription_id"],
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          status: { type: "string" },
+          current_period_end: { type: "number" },
+          cancel_at_period_end: { type: "boolean" },
+        },
+        required: ["id", "status"],
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
   ];
 }
 
@@ -271,6 +355,64 @@ function getToolHandlers(client: StripeClient): Record<string, ToolHandler> {
           client.delete<StripeSubscription>(`/subscriptions/${params.subscription_id}`, body as Record<string, string | number | boolean | undefined | null>)
         , { tool: "cancel_subscription", subscription_id: params.subscription_id });
       }
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(subscription, null, 2) }],
+        structuredContent: subscription,
+      };
+    },
+
+    pause_subscription: async (args) => {
+      const params = PauseSubscriptionSchema.parse(args);
+
+      const body: Record<string, string | number | boolean | undefined | null> = {
+        "pause_collection[behavior]": "void",
+      };
+      if (params.resumes_at) {
+        body["pause_collection[resumes_at]"] = params.resumes_at;
+      }
+
+      const subscription = await logger.time("tool.pause_subscription", () =>
+        client.post<StripeSubscription>(`/subscriptions/${params.subscription_id}`, body)
+      , { tool: "pause_subscription", subscription_id: params.subscription_id });
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(subscription, null, 2) }],
+        structuredContent: subscription,
+      };
+    },
+
+    update_subscription: async (args) => {
+      const params = UpdateSubscriptionSchema.parse(args);
+      const { subscription_id, price, quantity, trial_end, proration_behavior, metadata, coupon, promotion_code, default_payment_method, cancel_at_period_end } = params;
+
+      const body: Record<string, string | number | boolean | undefined | null> = {};
+
+      // Handle price change via items array
+      if (price) {
+        body["items[0][price]"] = price;
+        if (quantity) body["items[0][quantity]"] = quantity;
+        if (proration_behavior) body.proration_behavior = proration_behavior;
+      } else if (quantity) {
+        body["items[0][quantity]"] = quantity;
+      }
+
+      if (trial_end !== undefined) {
+        body.trial_end = typeof trial_end === "number" ? trial_end : trial_end;
+      }
+      if (cancel_at_period_end !== undefined) body.cancel_at_period_end = cancel_at_period_end;
+      if (coupon) body.coupon = coupon;
+      if (promotion_code) body.promotion_code = promotion_code;
+      if (default_payment_method) body.default_payment_method = default_payment_method;
+      if (metadata) {
+        for (const [k, v] of Object.entries(metadata)) {
+          body[`metadata[${k}]`] = v;
+        }
+      }
+
+      const subscription = await logger.time("tool.update_subscription", () =>
+        client.post<StripeSubscription>(`/subscriptions/${subscription_id}`, body)
+      , { tool: "update_subscription", subscription_id });
 
       return {
         content: [{ type: "text", text: JSON.stringify(subscription, null, 2) }],

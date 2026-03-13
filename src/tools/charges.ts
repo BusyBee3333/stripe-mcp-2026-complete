@@ -1,9 +1,9 @@
-// Charges and Refunds tools — Stripe API v1
-// Covers: list_charges, create_refund
+// Charges tools — Stripe API v1
+// Covers: list_charges
 
 import { z } from "zod";
 import type { StripeClient } from "../client.js";
-import type { ToolDefinition, ToolHandler, StripeCharge, StripeRefund } from "../types.js";
+import type { ToolDefinition, ToolHandler, StripeCharge } from "../types.js";
 import { logger } from "../logger.js";
 
 // === Zod Schemas ===
@@ -16,13 +16,6 @@ const ListChargesSchema = z.object({
   created_lte: z.number().optional().describe("Filter by creation time (Unix timestamp, <=)"),
 });
 
-const CreateRefundSchema = z.object({
-  charge: z.string().optional().describe("Charge ID (ch_xxx) to refund — provide either charge or payment_intent"),
-  payment_intent: z.string().optional().describe("PaymentIntent ID (pi_xxx) to refund — alternative to charge"),
-  amount: z.number().int().positive().optional().describe("Amount to refund in smallest currency unit (omit for full refund)"),
-  reason: z.enum(["duplicate", "fraudulent", "requested_by_customer"]).optional().describe("Refund reason"),
-  metadata: z.record(z.string()).optional().describe("Key-value metadata"),
-});
 
 // === Tool Definitions ===
 function getToolDefinitions(): ToolDefinition[] {
@@ -64,41 +57,7 @@ function getToolDefinitions(): ToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
-    },
-    {
-      name: "create_refund",
-      title: "Create Refund",
-      description:
-        "Create a refund for a Stripe charge or PaymentIntent. Provide either charge (ch_xxx) or payment_intent (pi_xxx). Omit amount for a full refund, or specify partial amount in smallest currency unit. Reason: duplicate, fraudulent, or requested_by_customer.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          charge: { type: "string", description: "Charge ID (ch_xxx) to refund" },
-          payment_intent: { type: "string", description: "PaymentIntent ID (pi_xxx) to refund (alternative to charge)" },
-          amount: { type: "number", description: "Refund amount in smallest currency unit (omit for full refund)" },
-          reason: { type: "string", enum: ["duplicate", "fraudulent", "requested_by_customer"], description: "Refund reason" },
-          metadata: { type: "object", description: "Key-value metadata" },
-        },
-      },
-      outputSchema: {
-        type: "object",
-        properties: {
-          id: { type: "string" },
-          amount: { type: "number" },
-          charge: { type: "string" },
-          currency: { type: "string" },
-          status: { type: "string" },
-          reason: { type: "string" },
-        },
-        required: ["id", "amount"],
-      },
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
-        openWorldHint: false,
-      },
-    },
+    }
   ];
 }
 
@@ -135,31 +94,7 @@ function getToolHandlers(client: StripeClient): Record<string, ToolHandler> {
         content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
         structuredContent: response,
       };
-    },
-
-    create_refund: async (args) => {
-      const params = CreateRefundSchema.parse(args);
-
-      if (!params.charge && !params.payment_intent) {
-        throw new Error("Either charge or payment_intent is required for create_refund");
-      }
-
-      const body: Record<string, unknown> = {};
-      if (params.charge) body.charge = params.charge;
-      if (params.payment_intent) body.payment_intent = params.payment_intent;
-      if (params.amount) body.amount = params.amount;
-      if (params.reason) body.reason = params.reason;
-      if (params.metadata) body.metadata = params.metadata;
-
-      const refund = await logger.time("tool.create_refund", () =>
-        client.post<StripeRefund>("/refunds", body as Record<string, string | number | boolean | undefined | null>)
-      , { tool: "create_refund" });
-
-      return {
-        content: [{ type: "text", text: JSON.stringify(refund, null, 2) }],
-        structuredContent: refund,
-      };
-    },
+    }
   };
 }
 

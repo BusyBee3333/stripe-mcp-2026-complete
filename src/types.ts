@@ -154,3 +154,125 @@ export interface StripeList<T> {
   has_more: boolean;
   url: string;
 }
+
+export interface StripeDispute {
+  id: string;
+  object: "dispute";
+  amount: number;
+  currency: string;
+  charge: string;
+  payment_intent?: string | null;
+  reason: string;
+  status: string;
+  evidence?: Record<string, unknown>;
+  evidence_details?: Record<string, unknown>;
+  created: number;
+  livemode: boolean;
+}
+
+export interface StripeCoupon {
+  id: string;
+  object: "coupon";
+  name?: string | null;
+  percent_off?: number | null;
+  amount_off?: number | null;
+  currency?: string | null;
+  duration: string;
+  duration_in_months?: number | null;
+  max_redemptions?: number | null;
+  times_redeemed: number;
+  valid: boolean;
+  metadata?: Record<string, string>;
+  created: number;
+  livemode: boolean;
+}
+
+export interface StripePaymentMethod {
+  id: string;
+  object: "payment_method";
+  type: string;
+  customer?: string | null;
+  card?: {
+    brand: string;
+    last4: string;
+    exp_month: number;
+    exp_year: number;
+    country?: string | null;
+  } | null;
+  billing_details?: Record<string, unknown>;
+  created: number;
+  livemode: boolean;
+}
+
+export interface StripeCheckoutSession {
+  id: string;
+  object: "checkout.session";
+  url?: string | null;
+  status?: string | null;
+  mode: string;
+  customer?: string | null;
+  customer_email?: string | null;
+  payment_intent?: string | null;
+  subscription?: string | null;
+  client_reference_id?: string | null;
+  expires_at: number;
+  created: number;
+  livemode: boolean;
+}
+
+export interface StripeWebhookEndpoint {
+  id: string;
+  object: "webhook_endpoint";
+  url: string;
+  status: string;
+  enabled_events: string[];
+  secret?: string;
+  description?: string | null;
+  api_version?: string | null;
+  metadata?: Record<string, string>;
+  created: number;
+  livemode: boolean;
+}
+
+export interface StripeTransfer {
+  id: string;
+  object: "transfer";
+  amount: number;
+  currency: string;
+  destination: string;
+  balance_transaction?: string | null;
+  source_transaction?: string | null;
+  description?: string | null;
+  transfer_group?: string | null;
+  metadata?: Record<string, string>;
+  created: number;
+  livemode: boolean;
+}
+
+export interface StripeBalanceTransaction {
+  id: string;
+  object: "balance_transaction";
+  amount: number;
+  currency: string;
+  fee: number;
+  net: number;
+  type: string;
+  status: string;
+  source?: string | null;
+  description?: string | null;
+  created: number;
+  available_on: number;
+}
+
+export interface StripeBalanceFund {
+  amount: number;
+  currency: string;
+  source_types?: Record<string, number>;
+}
+
+export interface StripeBalance {
+  object: "balance";
+  available: StripeBalanceFund[];
+  pending: StripeBalanceFund[];
+  livemode: boolean;
+}

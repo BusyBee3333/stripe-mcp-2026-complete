@@ -1,5 +1,5 @@
 // Invoices tools — Stripe API v1
-// Covers: list_invoices, get_invoice
+// Covers: list_invoices, get_invoice, finalize_invoice, pay_invoice, void_invoice, get_invoice_line_items
 
 import { z } from "zod";
 import type { StripeClient } from "../client.js";
@@ -19,6 +19,29 @@ const ListInvoicesSchema = z.object({
 
 const GetInvoiceSchema = z.object({
   invoice_id: z.string().describe("Stripe invoice ID (in_xxx)"),
+});
+
+const FinalizeInvoiceSchema = z.object({
+  invoice_id: z.string().describe("Stripe invoice ID (in_xxx) to finalize — must be in draft status"),
+  auto_advance: z.boolean().optional().describe("Whether to auto-advance the invoice after finalization (default: true)"),
+});
+
+const PayInvoiceSchema = z.object({
+  invoice_id: z.string().describe("Stripe invoice ID (in_xxx) to pay — must be in open status"),
+  payment_method: z.string().optional().describe("Payment method ID (pm_xxx) to charge — uses customer default if omitted"),
+  source: z.string().optional().describe("Source ID to charge (legacy cards)"),
+  forgive: z.boolean().optional().describe("If true, marks invoice as paid even if payment fails (used to write off bad debt)"),
+  paid_out_of_band: z.boolean().optional().describe("If true, marks invoice as paid without charging (e.g., cash payment)"),
+});
+
+const VoidInvoiceSchema = z.object({
+  invoice_id: z.string().describe("Stripe invoice ID (in_xxx) to void — must be in open status. This is irreversible."),
+});
+
+const GetInvoiceLineItemsSchema = z.object({
+  invoice_id: z.string().describe("Stripe invoice ID (in_xxx)"),
+  limit: z.number().min(1).max(100).optional().default(20).describe("Number of results (1-100, default 20)"),
+  starting_after: z.string().optional().describe("Keyset pagination cursor — last ID from previous page"),
 });
 
 // === Tool Definitions ===
@@ -97,6 +120,131 @@ function getToolDefinitions(): ToolDefinition[] {
         openWorldHint: false,
       },
     },
+    {
+      name: "finalize_invoice",
+      title: "Finalize Invoice",
+      description:
+        "Finalize a Stripe draft invoice, making it ready to be paid. Once finalized, a PDF is generated and the invoice can be sent to the customer or paid programmatically. Only draft invoices can be finalized.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          invoice_id: { type: "string", description: "Stripe invoice ID (in_xxx) — must be in draft status" },
+          auto_advance: { type: "boolean", description: "Auto-advance after finalization (default: true)" },
+        },
+        required: ["invoice_id"],
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          status: { type: "string" },
+          hosted_invoice_url: { type: "string" },
+          invoice_pdf: { type: "string" },
+        },
+        required: ["id", "status"],
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    {
+      name: "pay_invoice",
+      title: "Pay Invoice",
+      description:
+        "Attempt to pay an open Stripe invoice immediately. Uses the customer's default payment method unless you specify payment_method. Set paid_out_of_band=true to mark as paid without charging (for cash/offline payments). Set forgive=true to write off bad debt.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          invoice_id: { type: "string", description: "Stripe invoice ID (in_xxx) — must be in open status" },
+          payment_method: { type: "string", description: "Payment method ID (pm_xxx) to use" },
+          forgive: { type: "boolean", description: "Mark as paid even if charge fails (bad debt write-off)" },
+          paid_out_of_band: { type: "boolean", description: "Mark as paid without charging (offline payments)" },
+        },
+        required: ["invoice_id"],
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          status: { type: "string" },
+          paid: { type: "boolean" },
+          amount_paid: { type: "number" },
+        },
+        required: ["id", "status"],
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    {
+      name: "void_invoice",
+      title: "Void Invoice",
+      description:
+        "Void an open Stripe invoice — marks it as uncollectible and cancelled. This is irreversible. The invoice status changes to 'void'. Use when an invoice was issued in error or is no longer valid.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          invoice_id: { type: "string", description: "Stripe invoice ID (in_xxx) — must be in open status" },
+        },
+        required: ["invoice_id"],
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          status: { type: "string" },
+        },
+        required: ["id", "status"],
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    {
+      name: "get_invoice_line_items",
+      title: "Get Invoice Line Items",
+      description:
+        "List line items for a specific Stripe invoice (in_xxx). Returns item descriptions, amounts, quantities, and associated subscription/price details. Uses keyset pagination — pass meta.lastId as starting_after for the next page.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          invoice_id: { type: "string", description: "Stripe invoice ID (in_xxx)" },
+          limit: { type: "number", description: "Number of results (1-100, default 20)" },
+          starting_after: { type: "string", description: "Pagination cursor — last ID from previous page" },
+        },
+        required: ["invoice_id"],
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          data: { type: "array" },
+          meta: {
+            type: "object",
+            properties: {
+              count: { type: "number" },
+              hasMore: { type: "boolean" },
+              lastId: { type: "string" },
+            },
+          },
+        },
+        required: ["data", "meta"],
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
   ];
 }
 
@@ -146,6 +294,82 @@ function getToolHandlers(client: StripeClient): Record<string, ToolHandler> {
       return {
         content: [{ type: "text", text: JSON.stringify(invoice, null, 2) }],
         structuredContent: invoice,
+      };
+    },
+
+    finalize_invoice: async (args) => {
+      const params = FinalizeInvoiceSchema.parse(args);
+
+      const body: Record<string, string | number | boolean | undefined | null> = {};
+      if (params.auto_advance !== undefined) body.auto_advance = params.auto_advance;
+
+      const invoice = await logger.time("tool.finalize_invoice", () =>
+        client.post<StripeInvoice>(`/invoices/${params.invoice_id}/finalize`, body)
+      , { tool: "finalize_invoice", invoice_id: params.invoice_id });
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(invoice, null, 2) }],
+        structuredContent: invoice,
+      };
+    },
+
+    pay_invoice: async (args) => {
+      const params = PayInvoiceSchema.parse(args);
+
+      const body: Record<string, string | number | boolean | undefined | null> = {};
+      if (params.payment_method) body.payment_method = params.payment_method;
+      if (params.source) body.source = params.source;
+      if (params.forgive !== undefined) body.forgive = params.forgive;
+      if (params.paid_out_of_band !== undefined) body.paid_out_of_band = params.paid_out_of_band;
+
+      const invoice = await logger.time("tool.pay_invoice", () =>
+        client.post<StripeInvoice>(`/invoices/${params.invoice_id}/pay`, body)
+      , { tool: "pay_invoice", invoice_id: params.invoice_id });
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(invoice, null, 2) }],
+        structuredContent: invoice,
+      };
+    },
+
+    void_invoice: async (args) => {
+      const { invoice_id } = VoidInvoiceSchema.parse(args);
+
+      const invoice = await logger.time("tool.void_invoice", () =>
+        client.post<StripeInvoice>(`/invoices/${invoice_id}/void`, {})
+      , { tool: "void_invoice", invoice_id });
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(invoice, null, 2) }],
+        structuredContent: invoice,
+      };
+    },
+
+    get_invoice_line_items: async (args) => {
+      const params = GetInvoiceLineItemsSchema.parse(args);
+
+      const queryParams: Record<string, string | number | boolean | undefined | null> = {
+        limit: params.limit,
+      };
+      if (params.starting_after) queryParams.starting_after = params.starting_after;
+
+      const result = await logger.time("tool.get_invoice_line_items", () =>
+        client.list<Record<string, unknown>>(`/invoices/${params.invoice_id}/lines`, queryParams)
+      , { tool: "get_invoice_line_items", invoice_id: params.invoice_id });
+
+      const lastItem = result.data[result.data.length - 1] as { id?: string } | undefined;
+      const response = {
+        data: result.data,
+        meta: {
+          count: result.data.length,
+          hasMore: result.has_more,
+          ...(lastItem?.id ? { lastId: lastItem.id } : {}),
+        },
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+        structuredContent: response,
       };
     },
   };
