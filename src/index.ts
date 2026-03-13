@@ -16,12 +16,19 @@ const MCP_VERSION = "1.0.0";
 // ============================================
 async function loadAllTools(client: StripeClient) {
   const [
+    // Round 1: Core
     health, customers, paymentIntents, subscriptions, invoices, products, charges,
     refunds, disputes, prices, coupons, paymentMethods, checkout, webhooks, transfers, balance,
-    // Round 2 additions
+    // Round 2: Expanded core
     subscriptionSchedules, setupIntents, taxRates, billingPortal, payouts,
     connect, promotionCodes, creditNotes, meters, shippingRates,
+    // Round 3: Full API coverage
+    events, files, tokens, exchangeRates, countrySpecs, topups, radar, reporting,
+    reviews, issuing, terminal, paymentLinks, subscriptionItems, tax, identity,
+    financialConnections, mandates, testClocks, applicationFees, ephemeralKeys,
+    sources, balanceTransactions, treasury,
   ] = await Promise.all([
+    // Round 1: Core
     import("./tools/health.js").then((m) => m.getTools(client)),
     import("./tools/customers.js").then((m) => m.getTools(client)),
     import("./tools/payment_intents.js").then((m) => m.getTools(client)),
@@ -38,7 +45,7 @@ async function loadAllTools(client: StripeClient) {
     import("./tools/webhooks.js").then((m) => m.getTools(client)),
     import("./tools/transfers.js").then((m) => m.getTools(client)),
     import("./tools/balance.js").then((m) => m.getTools(client)),
-    // Round 2 additions
+    // Round 2: Expanded core
     import("./tools/subscription_schedules.js").then((m) => m.getTools(client)),
     import("./tools/setup_intents.js").then((m) => m.getTools(client)),
     import("./tools/tax_rates.js").then((m) => m.getTools(client)),
@@ -49,14 +56,44 @@ async function loadAllTools(client: StripeClient) {
     import("./tools/credit_notes.js").then((m) => m.getTools(client)),
     import("./tools/meters.js").then((m) => m.getTools(client)),
     import("./tools/shipping_rates.js").then((m) => m.getTools(client)),
+    // Round 3: Full API coverage
+    import("./tools/events.js").then((m) => m.getTools(client)),
+    import("./tools/files.js").then((m) => m.getTools(client)),
+    import("./tools/tokens.js").then((m) => m.getTools(client)),
+    import("./tools/exchange_rates.js").then((m) => m.getTools(client)),
+    import("./tools/country_specs.js").then((m) => m.getTools(client)),
+    import("./tools/topups.js").then((m) => m.getTools(client)),
+    import("./tools/radar.js").then((m) => m.getTools(client)),
+    import("./tools/reporting.js").then((m) => m.getTools(client)),
+    import("./tools/reviews.js").then((m) => m.getTools(client)),
+    import("./tools/issuing.js").then((m) => m.getTools(client)),
+    import("./tools/terminal.js").then((m) => m.getTools(client)),
+    import("./tools/payment_links.js").then((m) => m.getTools(client)),
+    import("./tools/subscription_items.js").then((m) => m.getTools(client)),
+    import("./tools/tax.js").then((m) => m.getTools(client)),
+    import("./tools/identity.js").then((m) => m.getTools(client)),
+    import("./tools/financial_connections.js").then((m) => m.getTools(client)),
+    import("./tools/mandates.js").then((m) => m.getTools(client)),
+    import("./tools/test_clocks.js").then((m) => m.getTools(client)),
+    import("./tools/application_fees.js").then((m) => m.getTools(client)),
+    import("./tools/ephemeral_keys.js").then((m) => m.getTools(client)),
+    import("./tools/sources.js").then((m) => m.getTools(client)),
+    import("./tools/balance_transactions.js").then((m) => m.getTools(client)),
+    import("./tools/treasury.js").then((m) => m.getTools(client)),
   ]);
 
   return [
+    // Round 1: Core
     health, customers, paymentIntents, subscriptions, invoices, products, charges,
     refunds, disputes, prices, coupons, paymentMethods, checkout, webhooks, transfers, balance,
-    // Round 2 additions
+    // Round 2: Expanded core
     subscriptionSchedules, setupIntents, taxRates, billingPortal, payouts,
     connect, promotionCodes, creditNotes, meters, shippingRates,
+    // Round 3: Full API coverage
+    events, files, tokens, exchangeRates, countrySpecs, topups, radar, reporting,
+    reviews, issuing, terminal, paymentLinks, subscriptionItems, tax, identity,
+    financialConnections, mandates, testClocks, applicationFees, ephemeralKeys,
+    sources, balanceTransactions, treasury,
   ];
 }
 
